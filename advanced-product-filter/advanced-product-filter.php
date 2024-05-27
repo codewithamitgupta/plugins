@@ -63,7 +63,14 @@ function apf_register_acf_fields() {
                     'key' => 'field_brand',
                     'label' => 'Brand',
                     'name' => 'brand',
-                    'type' => 'text',
+                    'type' => 'select',
+                    'choices' => array(
+                        'brand1' => 'Brand 1',
+                        'brand2' => 'Brand 2',
+                        'brand3' => 'Brand 3',
+                    ),
+                    'allow_null' => 0,
+                    'multiple' => 0,
                 ),
             ),
             'location' => array(
@@ -80,8 +87,6 @@ function apf_register_acf_fields() {
 }
 add_action('acf/init', 'apf_register_acf_fields');
 
-
-// Create shortcode for the filter interface
 function apf_filter_shortcode() {
     ob_start();
     ?>
@@ -98,15 +103,15 @@ function apf_filter_shortcode() {
             </div>
             <div class="filter-group">
                 <label for="filter-color">Color</label>
-                <input type="text" name="color" placeholder="Color">
+                <?php apf_dropdown_product_attribute('pa_color'); ?>
             </div>
             <div class="filter-group">
                 <label for="filter-size">Size</label>
-                <input type="text" name="size" placeholder="Size">
+                <?php apf_dropdown_product_attribute('pa_size'); ?>
             </div>
             <div class="filter-group">
                 <label for="filter-brand">Brand</label>
-                <input type="text" name="brand" placeholder="Brand">
+                <?php apf_dropdown_brand_attribute(); ?>
             </div>
             <div class="filter-group">
                 <label for="filter-availability">Availability</label>
@@ -117,6 +122,7 @@ function apf_filter_shortcode() {
                 </select>
             </div>
             <button type="submit">Filter</button>
+            <button type="button" id="reset-filters">Reset</button>
         </form>
         <div id="apf-results"></div>
     </div>
@@ -125,60 +131,181 @@ function apf_filter_shortcode() {
 }
 add_shortcode('apf_filter', 'apf_filter_shortcode');
 
-// Handle AJAX filtering
+
+// Display the filter shortcode on the front page
+function apf_display_filter_on_front_page() {
+    if (is_front_page()) {
+        echo do_shortcode('[apf_filter]');
+    }
+}
+add_action('wp_head', 'apf_display_filter_on_front_page');
+
+// Dropdown for product attribute
+function apf_dropdown_product_attribute($taxonomy) {
+    $terms = get_terms(array(
+        'taxonomy' => $taxonomy,
+        'hide_empty' => true,
+    ));
+    
+    if (!empty($terms) && !is_wp_error($terms)) {
+        echo '<select name="' . esc_attr($taxonomy) . '">';
+        echo '<option value="">Select ' . ucfirst(str_replace('pa_', '', $taxonomy)) . '</option>';
+        foreach ($terms as $term) {
+            echo '<option value="' . esc_attr($term->slug) . '">' . esc_html($term->name) . '</option>';
+        }
+        echo '</select>';
+    }
+}
+
+// Dropdown for brand attribute
+function apf_dropdown_brand_attribute() {
+    $brands = get_terms(array(
+        'taxonomy' => 'brand',
+        'hide_empty' => true,
+    ));
+
+    if (!empty($brands) && !is_wp_error($brands)) {
+        echo '<select name="brand">';
+        echo '<option value="">Select Brand</option>';
+        foreach ($brands as $brand) {
+            echo '<option value="' . esc_attr($brand->slug) . '">' . esc_html($brand->name) . '</option>';
+        }
+        echo '</select>';
+    }
+}
+
+// Modify WooCommerce product query to filter products
+function apf_modify_shop_query($query) {
+    if (!is_admin() && $query->is_main_query() && is_shop()) {
+        $meta_query = array('relation' => 'AND');
+        $tax_query = array('relation' => 'AND');
+
+        if (isset($_GET['category']) && !empty($_GET['category'])) {
+            $tax_query[] = array(
+                'taxonomy' => 'product_cat',
+                'field'    => 'id',
+                'terms'    => intval($_GET['category']),
+            );
+        }
+
+        if ((isset($_GET['min_price']) && !empty($_GET['min_price'])) || (isset($_GET['max_price']) && !empty($_GET['max_price']))) {
+            if (!empty($_GET['min_price'])) {
+                $meta_query[] = array(
+                    'key'     => '_price',
+                    'value'   => floatval($_GET['min_price']),
+                    'compare' => '>=',
+                    'type'    => 'NUMERIC',
+                );
+            }
+
+            if (!empty($_GET['max_price'])) {
+                $meta_query[] = array(
+                    'key'     => '_price',
+                    'value'   => floatval($_GET['max_price']),
+                    'compare' => '<=',
+                    'type'    => 'NUMERIC',
+                );
+            }
+
+            $query->set('meta_query', $meta_query);
+        }
+
+        if (isset($_GET['pa_color']) && !empty($_GET['pa_color'])) {
+            $tax_query[] = array(
+                'taxonomy' => 'pa_color',
+                'field'    => 'slug',
+                'terms'    => sanitize_text_field($_GET['pa_color']),
+            );
+        }
+
+        if (isset($_GET['pa_size']) && !empty($_GET['pa_size'])) {
+            $tax_query[] = array(
+                'taxonomy' => 'pa_size',
+                'field'    => 'slug',
+                'terms'    => sanitize_text_field($_GET['pa_size']),
+            );
+        }
+
+        if (isset($_GET['brand']) && !empty($_GET['brand'])) {
+            $meta_query[] = array(
+                'key'     => 'brand',
+                'value'   => sanitize_text_field($_GET['brand']),
+                'compare' => 'LIKE',
+            );
+        }
+
+        if (isset($_GET['availability']) && $_GET['availability'] != 'all') {
+            $meta_query[] = array(
+                'key'     => '_stock_status',
+                'value'   => $_GET['availability'] == 'in_stock' ? 'instock' : 'outofstock',
+            );
+        }
+
+        $query->set('meta_query', $meta_query);
+        $query->set('tax_query', $tax_query);
+    }
+}
+add_action('pre_get_posts', 'apf_modify_shop_query');
+
+// AJAX handler for filtering products
 function apf_filter_products() {
-    $args = array(
-        'post_type' => 'product',
-        'posts_per_page' => -1,
-    );
+    $meta_query = array('relation' => 'AND');
+    $tax_query = array('relation' => 'AND');
 
     if (!empty($_POST['category'])) {
-        $args['tax_query'][] = array(
+        $tax_query[] = array(
             'taxonomy' => 'product_cat',
-            'field' => 'id',
-            'terms' => intval($_POST['category']),
+            'field'    => 'id',
+            'terms'    => intval($_POST['category']),
         );
     }
 
     if (!empty($_POST['min_price']) || !empty($_POST['max_price'])) {
-        $args['meta_query'][] = array(
-            'key' => '_price',
-            'value' => array(floatval($_POST['min_price']), floatval($_POST['max_price'])),
+        $meta_query[] = array(
+            'key'     => '_price',
+            'value'   => array(floatval($_POST['min_price']), floatval($_POST['max_price'])),
             'compare' => 'BETWEEN',
-            'type' => 'NUMERIC',
+            'type'    => 'NUMERIC',
         );
     }
 
-    if (!empty($_POST['color'])) {
-        $args['meta_query'][] = array(
-            'key' => 'color',
-            'value' => sanitize_text_field($_POST['color']),
-            'compare' => 'LIKE',
+    if (!empty($_POST['pa_color'])) {
+        $tax_query[] = array(
+            'taxonomy' => 'pa_color',
+            'field'    => 'slug',
+            'terms'    => sanitize_text_field($_POST['pa_color']),
         );
     }
 
-    if (!empty($_POST['size'])) {
-        $args['meta_query'][] = array(
-            'key' => 'size',
-            'value' => sanitize_text_field($_POST['size']),
-            'compare' => 'LIKE',
+    if (!empty($_POST['pa_size'])) {
+        $tax_query[] = array(
+            'taxonomy' => 'pa_size',
+            'field'    => 'slug',
+            'terms'    => sanitize_text_field($_POST['pa_size']),
         );
     }
 
     if (!empty($_POST['brand'])) {
-        $args['meta_query'][] = array(
-            'key' => 'brand',
-            'value' => sanitize_text_field($_POST['brand']),
+        $meta_query[] = array(
+            'key'     => 'brand',
+            'value'   => sanitize_text_field($_POST['brand']),
             'compare' => 'LIKE',
         );
     }
 
     if (!empty($_POST['availability']) && $_POST['availability'] != 'all') {
-        $args['meta_query'][] = array(
-            'key' => '_stock_status',
-            'value' => $_POST['availability'] == 'in_stock' ? 'instock' : 'outofstock',
+        $meta_query[] = array(
+            'key'     => '_stock_status',
+            'value'   => $_POST['availability'] == 'in_stock' ? 'instock' : 'outofstock',
         );
     }
+
+    $args = array(
+        'post_type'      => 'product',
+        'posts_per_page' => -1,
+        'meta_query'     => $meta_query,
+        'tax_query'      => $tax_query,
+    );
 
     $query = new WP_Query($args);
 
@@ -196,10 +323,8 @@ function apf_filter_products() {
 add_action('wp_ajax_apf_filter', 'apf_filter_products');
 add_action('wp_ajax_nopriv_apf_filter', 'apf_filter_products');
 
-// Display the filter shortcode on the WooCommerce shop page
+add_action('woocommerce_before_shop_loop', 'apf_display_filter_on_shop_page', 20);
+
 function apf_display_filter_on_shop_page() {
-    if (is_shop()) {
-        echo do_shortcode('[apf_filter]');
-    }
+    echo do_shortcode('[apf_filter]');
 }
-add_action('woocommerce_before_shop_loop', 'apf_display_filter_on_shop_page');
