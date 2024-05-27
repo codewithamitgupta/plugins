@@ -87,6 +87,7 @@ function apf_register_acf_fields() {
 }
 add_action('acf/init', 'apf_register_acf_fields');
 
+// Create shortcode for the filter interface
 function apf_filter_shortcode() {
     ob_start();
     ?>
@@ -157,22 +158,26 @@ function apf_dropdown_product_attribute($taxonomy) {
     }
 }
 
-// Dropdown for brand attribute
+// Dropdown function for product brands (using ACF field)
 function apf_dropdown_brand_attribute() {
-    $brands = get_terms(array(
-        'taxonomy' => 'brand',
-        'hide_empty' => true,
-    ));
+    // Retrieve ACF field choices for brands
+    $brand_choices = array(
+        'brand1' => 'Brand 1',
+        'brand2' => 'Brand 2',
+        'brand3' => 'Brand 3',
+        // Add more brand choices as needed
+    );
 
-    if (!empty($brands) && !is_wp_error($brands)) {
+    if ($brand_choices) {
         echo '<select name="brand">';
         echo '<option value="">Select Brand</option>';
-        foreach ($brands as $brand) {
-            echo '<option value="' . esc_attr($brand->slug) . '">' . esc_html($brand->name) . '</option>';
+        foreach ($brand_choices as $value => $label) {
+            echo '<option value="' . esc_attr($value) . '">' . esc_html($label) . '</option>';
         }
         echo '</select>';
     }
 }
+
 
 // Modify WooCommerce product query to filter products
 function apf_modify_shop_query($query) {
