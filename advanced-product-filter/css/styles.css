@@ -1,0 +1,19 @@
+#apf-filter {
+    margin: 20px 0;
+}
+#apf-filter .filter-group {
+    margin-bottom: 15px;
+}
+#apf-filter .filter-group label {
+    display: block;
+    margin-bottom: 5px;
+}
+#apf-filter .filter-group input,
+#apf-filter .filter-group select {
+    width: 100%;
+    padding: 8px;
+    box-sizing: border-box;
+}
+#apf-results {
+    margin-top: 20px;
+}
